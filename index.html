@@ -26,26 +26,20 @@ width:100%;
 
 <script>
 
-// velikost mapy (musí odpovídat obrázku)
 var width = 1 920;
 var height = 1 923;
 
-// vytvoření mapy
 var map = L.map('map', {
 crs: L.CRS.Simple,
 minZoom: -2
 });
 
-// souřadnice obrázku
 var bounds = [[0,0],[height,width]];
 
-// vložení obrázku mapy
 var image = L.imageOverlay('mapa.jpg', bounds).addTo(map);
 
-// přizpůsobení mapy
 map.fitBounds(bounds);
 
-// příklad bodu
 var marker = L.marker([2000,2000]).addTo(map);
 marker.bindPopup("Spawn");
 
