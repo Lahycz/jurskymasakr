@@ -1,0 +1,399 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>Herní mapa - Jurskymasakr</title>
+
+<link rel="stylesheet" href="https://unpkg.com/leaflet/dist/leaflet.css"/>
+
+<style>
+* {
+  margin: 0;
+  padding: 0;
+  box-sizing: border-box;
+}
+
+body {
+  font-family: Arial, sans-serif;
+  display: flex;
+  height: 100vh;
+}
+
+#map {
+  flex: 1;
+  height: 100vh;
+}
+
+/* Boční panel */
+.side-panel {
+  width: 350px;
+  background: #f5f5f5;
+  border-left: 1px solid #ddd;
+  overflow-y: auto;
+  padding: 15px;
+  box-shadow: -2px 0 5px rgba(0,0,0,0.1);
+}
+
+.panel-section {
+  margin-bottom: 20px;
+  padding-bottom: 15px;
+  border-bottom: 1px solid #ddd;
+}
+
+.panel-section h3 {
+  background: #333;
+  color: white;
+  padding: 10px;
+  border-radius: 3px;
+  margin-bottom: 10px;
+  font-size: 14px;
+}
+
+.form-group {
+  margin-bottom: 10px;
+}
+
+label {
+  display: block;
+  margin-bottom: 5px;
+  font-weight: bold;
+  font-size: 12px;
+}
+
+input[type="text"],
+input[type="number"],
+input[type="color"],
+select {
+  width: 100%;
+  padding: 8px;
+  border: 1px solid #ccc;
+  border-radius: 3px;
+  font-size: 12px;
+}
+
+button {
+  width: 100%;
+  padding: 10px;
+  background: #4CAF50;
+  color: white;
+  border: none;
+  border-radius: 3px;
+  cursor: pointer;
+  font-size: 12px;
+  margin-bottom: 5px;
+}
+
+button:hover {
+  background: #45a049;
+}
+
+button.danger {
+  background: #f44336;
+}
+
+button.danger:hover {
+  background: #da190b;
+}
+
+.status {
+  background: #e3f2fd;
+  border-left: 3px solid #2196F3;
+  padding: 10px;
+  border-radius: 2px;
+  font-size: 12px;
+  margin-bottom: 10px;
+}
+
+.status.error {
+  background: #ffebee;
+  border-left-color: #f44336;
+}
+
+.status.success {
+  background: #e8f5e9;
+  border-left-color: #4CAF50;
+}
+
+.friend-item {
+  background: white;
+  padding: 10px;
+  margin-bottom: 8px;
+  border-left: 3px solid #FF9800;
+  border-radius: 2px;
+  font-size: 12px;
+}
+
+.friend-item button {
+  width: 100%;
+  padding: 5px;
+  font-size: 11px;
+  margin-top: 5px;
+}
+
+.player-info {
+  background: white;
+  padding: 10px;
+  border-radius: 3px;
+  font-size: 12px;
+  color: #666;
+}
+</style>
+</head>
+
+<body>
+
+<div id="map"></div>
+
+<div class="side-panel">
+  <!-- Status -->
+  <div class="panel-section">
+    <div id="status" class="status">
+      <strong>Status:</strong> Inicializace...
+    </div>
+    <div id="player-info" class="player-info">
+      <strong>Tvoje Steam ID:</strong> -
+    </div>
+    <div id="position" style="font-size: 12px; color: #666; margin-top: 10px;">
+      <strong>Tvoje pozice:</strong> -
+    </div>
+    <button onclick="logout()" class="danger">Odhlášení</button>
+  </div>
+
+  <!-- Přidej přítele -->
+  <div class="panel-section">
+    <h3>👥 Přátelé</h3>
+    <div class="form-group">
+      <label>Steam ID přítele:</label>
+      <input type="text" id="friendSteamId" placeholder="Např. 76561198...">
+    </div>
+    <button onclick="addFriend()">Přidej přítele</button>
+    <div id="friendsList" style="margin-top: 15px;"></div>
+  </div>
+
+  <!-- Spawn Point -->
+  <div class="panel-section">
+    <h3>🎯 Spawn Point</h3>
+    <div style="font-size: 12px; color: #666;">
+      Pozice: <strong>[961.5, 960]</strong>
+    </div>
+  </div>
+</div>
+
+<script src="https://unpkg.com/leaflet/dist/leaflet.js"></script>
+
+<script>
+const CONFIG = {
+  mapWidth: 1920,
+  mapHeight: 1923,
+  updateInterval: 10000, // 10 sekund
+  serverUrl: 'http://localhost:5000' // Python server
+};
+
+let map;
+let playerMarker = null;
+let friendMarkers = {};
+let currentSteamId = null;
+
+// ============ INICIALIZACE ============
+window.addEventListener('DOMContentLoaded', async () => {
+  await initPlayer();
+  initMap();
+  
+  // Aktualizuj pozici každých 10 sekund
+  setInterval(updatePosition, CONFIG.updateInterval);
+  setInterval(updateFriends, CONFIG.updateInterval);
+});
+
+// ============ PLAYER INITIALIZATION ============
+async function initPlayer() {
+  const steamIdFromStorage = localStorage.getItem('steam_id');
+  
+  if (!steamIdFromStorage) {
+    // Přesměruj na login
+    window.location.href = `${CONFIG.serverUrl}/api/login`;
+    return;
+  }
+  
+  currentSteamId = steamIdFromStorage;
+  document.getElementById('player-info').innerHTML = 
+    `<strong>Tvoje Steam ID:</strong> ${currentSteamId}`;
+  
+  showStatus('Připojeno ✓', 'success');
+}
+
+// ============ MAPA ============
+function initMap() {
+  map = L.map('map', {
+    crs: L.CRS.Simple,
+    minZoom: -2,
+    maxZoom: 3
+  });
+
+  const bounds = [[0, 0], [CONFIG.mapHeight, CONFIG.mapWidth]];
+  L.imageOverlay('mapa.jpg', bounds).addTo(map);
+  map.fitBounds(bounds);
+
+  // Spawn Point
+  const spawnMarker = L.marker([961.5, 960], {
+    icon: L.icon({
+      iconUrl: 'data:image/svg+xml;base64,PHN2ZyB3aWR0aD0iMjQiIGhlaWdodD0iMjQiIHZpZXdCb3g9IjAgMCAyNCAyNCI+PGNpcmNsZSBjeD0iMTIiIGN5PSIxMiIgcj0iMTAiIGZpbGw9IiNGRkMzMDAiIHN0cm9rZT0iIzMzMyIgc3Ryb2tlLXdpZHRoPSIyIi8+PC9zdmc+',
+      iconSize: [24, 24],
+      iconAnchor: [12, 12],
+      popupAnchor: [0, -12]
+    })
+  }).addTo(map);
+  spawnMarker.bindPopup("<b>Spawn Point</b>");
+  spawnMarker.bindTooltip("Spawn", {permanent: false});
+
+  // Tvůj player marker
+  playerMarker = L.marker([961.5, 960], {
+    icon: L.icon({
+      iconUrl: 'data:image/svg+xml;base64,PHN2ZyB3aWR0aD0iMjQiIGhlaWdodD0iMjQiIHZpZXdCb3g9IjAgMCAyNCAyNCI+PGNpcmNsZSBjeD0iMTIiIGN5PSIxMiIgcj0iOCIgZmlsbD0iIzQyQTVGNSIgc3Ryb2tlPSJ3aGl0ZSIgc3Ryb2tlLXdpZHRoPSIyIi8+PC9zdmc+',
+      iconSize: [24, 24],
+      iconAnchor: [12, 12],
+      popupAnchor: [0, -12]
+    })
+  }).addTo(map);
+  playerMarker.bindPopup("<b>Tvoje pozice</b>");
+  playerMarker.bindTooltip("Ty", {permanent: true});
+}
+
+// ============ KOMUNIKACE SE SERVEREM ============
+async function updatePosition() {
+  if (!currentSteamId) return;
+  
+  try {
+    const response = await fetch(`${CONFIG.serverUrl}/api/position`, {
+      credentials: 'include'
+    });
+    
+    if (!response.ok) throw new Error('Chyba serveru');
+    
+    const data = await response.json();
+    playerMarker.setLatLng([data.lat, data.lng]);
+    
+    document.getElementById('position').innerHTML = 
+      `<strong>Tvoje pozice:</strong> [${data.lat}, ${data.lng}]`;
+    
+    showStatus('Pozice aktualizována ✓', 'success');
+  } catch (error) {
+    showStatus(`Chyba: ${error.message}`, 'error');
+  }
+}
+
+async function updateFriends() {
+  if (!currentSteamId) return;
+  
+  try {
+    const response = await fetch(`${CONFIG.serverUrl}/api/friends/${currentSteamId}`, {
+      credentials: 'include'
+    });
+    
+    if (!response.ok) return;
+    
+    const friends = await response.json();
+    
+    // Odeber staré markery
+    Object.keys(friendMarkers).forEach(id => {
+      if (!(id in friends)) {
+        map.removeLayer(friendMarkers[id]);
+        delete friendMarkers[id];
+      }
+    });
+    
+    // Přidej nové markery
+    Object.entries(friends).forEach(([steamId, position]) => {
+      if (steamId in friendMarkers) {
+        friendMarkers[steamId].setLatLng([position.lat, position.lng]);
+      } else {
+        const marker = L.marker([position.lat, position.lng], {
+          icon: L.icon({
+            iconUrl: 'data:image/svg+xml;base64,PHN2ZyB3aWR0aD0iMjQiIGhlaWdodD0iMjQiIHZpZXdCb3g9IjAgMCAyNCAyNCI+PGNpcmNsZSBjeD0iMTIiIGN5PSIxMiIgcj0iOCIgZmlsbD0iI0ZGOTgwMCIgc3Ryb2tlPSJ3aGl0ZSIgc3Ryb2tlLXdpZHRoPSIyIi8+PC9zdmc+',
+            iconSize: [24, 24],
+            iconAnchor: [12, 12],
+            popupAnchor: [0, -12]
+          })
+        }).addTo(map);
+        marker.bindPopup(`<b>Přítel</b><br>${steamId}`);
+        friendMarkers[steamId] = marker;
+      }
+    });
+  } catch (error) {
+    console.error('Chyba pri nacitani pratel:', error);
+  }
+}
+
+async function addFriend() {
+  const friendId = document.getElementById('friendSteamId').value.trim();
+  
+  if (!friendId) {
+    showStatus('Vyplň Steam ID přítele!', 'error');
+    return;
+  }
+  
+  try {
+    const response = await fetch(`${CONFIG.serverUrl}/api/friends/add`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      credentials: 'include',
+      body: JSON.stringify({ friend_id: friendId })
+    });
+    
+    if (!response.ok) throw new Error('Chyba serveru');
+    
+    document.getElementById('friendSteamId').value = '';
+    showStatus('Přítel přidán! ✓', 'success');
+    updateFriends();
+  } catch (error) {
+    showStatus(`Chyba: ${error.message}`, 'error');
+  }
+}
+
+async function removeFriend(friendId) {
+  try {
+    const response = await fetch(`${CONFIG.serverUrl}/api/friends/remove`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      credentials: 'include',
+      body: JSON.stringify({ friend_id: friendId })
+    });
+    
+    if (!response.ok) throw new Error('Chyba serveru');
+    
+    showStatus('Přítel odstraněn', 'success');
+    updateFriends();
+  } catch (error) {
+    showStatus(`Chyba: ${error.message}`, 'error');
+  }
+}
+
+async function logout() {
+  try {
+    await fetch(`${CONFIG.serverUrl}/api/logout`, {
+      credentials: 'include'
+    });
+    localStorage.removeItem('steam_id');
+    window.location.href = '/index.html';
+  } catch (error) {
+    console.error('Chyba pri odhlasovani:', error);
+  }
+}
+
+// ============ UI FUNKCE ============
+function showStatus(message, type = 'info') {
+  const status = document.getElementById('status');
+  status.textContent = message;
+  status.className = 'status ' + type;
+  
+  if (type !== 'error') {
+    setTimeout(() => {
+      status.innerHTML = '<strong>Status:</strong> Připraveno';
+      status.className = 'status';
+    }, 3000);
+  }
+}
+
+</script>
+
+</body>
+</html>
