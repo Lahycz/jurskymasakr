@@ -1,206 +1,150 @@
-from flask import Flask, request, jsonify, session
+from flask import Flask, request, jsonify, session, redirect
 from flask_cors import CORS
-import json
-from datetime import datetime
-from functools import wraps
+import requests
 import os
+from datetime import datetime, timedelta
 
 app = Flask(__name__)
-app.secret_key = 'Lahovsky501314.'  # Změň na něco bezpečného
 CORS(app)
+app.secret_key = 'tvoj-tajny-klic' # Změň na silný klíč
 
-# ============ DATA V PAMĚTI ============
-# Struktura: {steam_id: {lat, lng, username, avatar, timestamp}}
-players_positions = {}
+# ===== STEAM AUTHENTICATION =====
+STEAM_OPENID_URL = 'https://steamcommunity.com/openid'
+STEAM_API_KEY = 'tvuj-steam-api-klic'  # Zvedni si z Steam Dev API
 
-# Struktura: {user_steam_id: [friend_steam_ids...]}
-friend_lists = {}
+# In-memory storage
+players = {}  # steam_id: {position, friends, last_update}
+friends = {}  # steam_id: [friend_steam_id, ...]
 
-# ============ STEAM AUTENTIFIKACE ============
-# Pokud máš Steam login integrovaný, SessionID se nastaví tady
+# ===== ROUTES =====
+@app.route('/api/login', methods=['GET'])
+def steam_login():
+    """Redirect to Steam OpenID login"""
+    return redirect(f'{STEAM_OPENID_URL}?openid.ns=http://specs.openid.net/auth/2.0&openid.mode=checkid_setup&openid.return_to={request.host_url}api/verify&openid.identity=http://specs.openid.net/auth/2.0/identifier_select&openid.claimed_id=http://specs.openid.net/auth/2.0/identifier_select')
 
-def get_steam_id_from_session():
-    """Vrátí Steam ID z session"""
-    return session.get('steam_id')
-
-def require_steam_login(f):
-    """Decorator pro kontrolu Steam loginu"""
-    @wraps(f)
-    def decorated_function(*args, **kwargs):
-        steam_id = get_steam_id_from_session()
-        if not steam_id:
-            return jsonify({'error': 'Unauthorized'}), 401
-        return f(*args, **kwargs)
-    return decorated_function
-
-# ============ POZICE HRÁČE ============
-
-@app.route('/api/position', methods=['GET'])
-@require_steam_login
-def get_position():
-    """Vrátí pozici aktuálního hráče"""
-    steam_id = get_steam_id_from_session()
-    
-    if steam_id in players_positions:
-        pos = players_positions[steam_id]
-        return jsonify({
-            'steam_id': steam_id,
-            'lat': pos['lat'],
-            'lng': pos['lng'],
-            'username': pos.get('username'),
-            'avatar': pos.get('avatar'),
-            'timestamp': pos.get('timestamp')
-        })
-    
-    # Výchozí pozice
-    return jsonify({
-        'steam_id': steam_id,
-        'lat': 961.5,
-        'lng': 960,
-        'username': 'Unknown',
-        'timestamp': datetime.now().isoformat()
-    })
-
-@app.route('/api/position', methods=['POST'])
-@require_steam_login
-def update_position():
-    """Aktualizuje pozici hráče"""
-    steam_id = get_steam_id_from_session()
-    data = request.get_json()
-    
-    if not data or 'lat' not in data or 'lng' not in data:
-        return jsonify({'error': 'Missing lat/lng'}), 400
-    
-    players_positions[steam_id] = {
-        'lat': float(data['lat']),
-        'lng': float(data['lng']),
-        'username': data.get('username', 'Unknown'),
-        'avatar': data.get('avatar'),
-        'timestamp': datetime.now().isoformat()
+@app.route('/api/verify', methods=['GET'])
+def verify_steam():
+    """Verify Steam login and store session"""
+    # Ověř Steam OpenID
+    params = {
+        'openid.ns': 'http://specs.openid.net/auth/2.0',
+        'openid.mode': 'check_auth',
     }
+    params.update(request.args)
     
-    return jsonify({'success': True, 'steam_id': steam_id})
+    response = requests.post(STEAM_OPENID_URL, data=params)
+    
+    if 'is_valid:true' in response.text:
+        # Extrahuj Steam ID z identity
+        steam_id = request.args.get('openid.identity', '').split('/')[-1]
+        session['steam_id'] = steam_id
+        
+        # Inicializuj hráče
+        if steam_id not in players:
+            players[steam_id] = {
+                'position': {'lat': 961.5, 'lng': 960},  # Spawn point
+                'friends': [],
+                'last_update': datetime.now().isoformat()
+            }
+        
+        return redirect('/map.html')  # Přesměruj na mapu
+    
+    return jsonify({'error': 'Steam verification failed'}), 401
 
-# ============ PŘÁTELÉ ============
-
-@app.route('/api/friends', methods=['GET'])
-@require_steam_login
-def get_friends():
-    """Vrátí pozice přátel aktuálního hráče"""
-    steam_id = get_steam_id_from_session()
-    friends_ids = friend_lists.get(steam_id, [])
+@app.route('/api/position', methods=['GET', 'POST'])
+def handle_position():
+    """Načti nebo aktualizuj pozici hráče"""
+    steam_id = request.cookies.get('steam_id') or session.get('steam_id')
     
-    friends = []
-    for friend_id in friends_ids:
-        if friend_id in players_positions:
-            pos = players_positions[friend_id]
-            friends.append({
-                'steam_id': friend_id,
-                'lat': pos['lat'],
-                'lng': pos['lng'],
-                'username': pos.get('username'),
-                'avatar': pos.get('avatar'),
-                'timestamp': pos.get('timestamp')
-            })
+    if not steam_id:
+        return jsonify({'error': 'Not authenticated'}), 401
     
-    return jsonify({'friends': friends})
+    if request.method == 'GET':
+        # Vrať pozici hráče
+        if steam_id in players:
+            return jsonify(players[steam_id]['position'])
+        return jsonify({'lat': 961.5, 'lng': 960})
+    
+    # POST: Aktualizuj pozici
+    data = request.get_json()
+    if steam_id not in players:
+        players[steam_id] = {
+            'position': {'lat': 961.5, 'lng': 960},
+            'friends': [],
+            'last_update': datetime.now().isoformat()
+        }
+    
+    players[steam_id]['position'] = data
+    players[steam_id]['last_update'] = datetime.now().isoformat()
+    
+    return jsonify({'success': True})
 
 @app.route('/api/friends/add', methods=['POST'])
-@require_steam_login
 def add_friend():
-    """Přidá přítele"""
-    steam_id = get_steam_id_from_session()
+    """Přidej přítele"""
+    steam_id = request.cookies.get('steam_id') or session.get('steam_id')
     data = request.get_json()
-    friend_id = data.get('friend_steam_id')
+    friend_steam_id = data.get('friend_id')
     
-    if not friend_id:
-        return jsonify({'error': 'Missing friend_steam_id'}), 400
+    if not steam_id or not friend_steam_id:
+        return jsonify({'error': 'Invalid input'}), 400
     
-    if steam_id not in friend_lists:
-        friend_lists[steam_id] = []
+    if steam_id not in players:
+        players[steam_id] = {
+            'position': {'lat': 961.5, 'lng': 960},
+            'friends': [],
+            'last_update': datetime.now().isoformat()
+        }
     
-    if friend_id not in friend_lists[steam_id]:
-        friend_lists[steam_id].append(friend_id)
+    if friend_steam_id not in players[steam_id]['friends']:
+        players[steam_id]['friends'].append(friend_steam_id)
     
     return jsonify({'success': True})
 
 @app.route('/api/friends/remove', methods=['POST'])
-@require_steam_login
 def remove_friend():
-    """Odebere přítele"""
-    steam_id = get_steam_id_from_session()
+    """Odeber přítele"""
+    steam_id = request.cookies.get('steam_id') or session.get('steam_id')
     data = request.get_json()
-    friend_id = data.get('friend_steam_id')
+    friend_steam_id = data.get('friend_id')
     
-    if steam_id in friend_lists and friend_id in friend_lists[steam_id]:
-        friend_lists[steam_id].remove(friend_id)
+    if steam_id in players and friend_steam_id in players[steam_id]['friends']:
+        players[steam_id]['friends'].remove(friend_steam_id)
     
     return jsonify({'success': True})
 
-# ============ MARKERY ============
-
-markers = {}
-
-@app.route('/api/markers', methods=['POST'])
-@require_steam_login
-def add_marker():
-    """Přidá marker na mapu"""
-    steam_id = get_steam_id_from_session()
-    data = request.get_json()
+@app.route('/api/friends/<steam_id>', methods=['GET'])
+def get_friends(steam_id):
+    """Vrať pozice přátel"""
+    current_user = request.cookies.get('steam_id') or session.get('steam_id')
     
-    if not data or 'name' not in data or 'lat' not in data or 'lng' not in data:
-        return jsonify({'error': 'Missing required fields'}), 400
+    if not current_user or current_user not in players:
+        return jsonify({'error': 'Not authenticated'}), 401
     
-    marker_id = f"{steam_id}_{data.get('id', int(datetime.now().timestamp() * 1000))}"
+    friend_positions = {}
+    for friend_id in players[current_user]['friends']:
+        if friend_id in players:
+            friend_positions[friend_id] = players[friend_id]['position']
     
-    markers[marker_id] = {
-        'steam_id': steam_id,
-        'name': data['name'],
-        'type': data.get('type', 'default'),
-        'color': data.get('color', '#2196F3'),
-        'lat': float(data['lat']),
-        'lng': float(data['lng']),
-        'timestamp': datetime.now().isoformat()
-    }
+    return jsonify(friend_positions)
+
+@app.route('/api/player/<steam_id>', methods=['GET'])
+def get_player_info(steam_id):
+    """Vrať info o hráči"""
+    if steam_id in players:
+        return jsonify({
+            'steam_id': steam_id,
+            'position': players[steam_id]['position'],
+            'last_update': players[steam_id]['last_update']
+        })
     
-    return jsonify({'success': True, 'marker_id': marker_id})
+    return jsonify({'error': 'Player not found'}), 404
 
-@app.route('/api/markers', methods=['GET'])
-@require_steam_login
-def get_markers():
-    """Vrátí markery aktuálního hráče"""
-    steam_id = get_steam_id_from_session()
-    user_markers = [m for m in markers.values() if m['steam_id'] == steam_id]
-    return jsonify({'markers': user_markers})
-
-# ============ DEBUG ENDPOINTS ============
-
-@app.route('/api/debug/login', methods=['POST'])
-def debug_login():
-    """DEBUG: Simulovaný login (smaž v produkci!)"""
-    data = request.get_json()
-    steam_id = data.get('steam_id')
-    username = data.get('username', 'Debug User')
-    
-    session['steam_id'] = steam_id
-    
-    return jsonify({
-        'success': True,
-        'steam_id': steam_id,
-        'message': 'Logged in (DEBUG MODE)'
-    })
-
-@app.route('/api/debug/players', methods=['GET'])
-def debug_players():
-    """DEBUG: Zobrazí všechny hráče"""
-    return jsonify(players_positions)
-
-# ============ HEALTH CHECK ============
-
-@app.route('/api/health', methods=['GET'])
-def health():
-    return jsonify({'status': 'ok'})
+@app.route('/api/logout', methods=['GET'])
+def logout():
+    """Odhlášení"""
+    session.clear()
+    return jsonify({'success': True})
 
 if __name__ == '__main__':
-    # Změň debug=False v produkci!
-    app.run(host='0.0.0.0', port=5000, debug=True)
+    app.run(debug=True, port=5000)
