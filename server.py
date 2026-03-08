@@ -47,7 +47,7 @@ def verify_steam():
                 'last_update': datetime.now().isoformat()
             }
         
-        return redirect('/index.html')  # Přesměruj na mapu
+        return redirect('/map.html')  # Přesměruj na mapu
     
     return jsonify({'error': 'Steam verification failed'}), 401
 
