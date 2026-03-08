@@ -6,7 +6,7 @@ from functools import wraps
 import os
 
 app = Flask(__name__)
-app.secret_key = '501314'  # Změň na něco bezpečného
+app.secret_key = 'Lahovsky501314.'  # Změň na něco bezpečného
 CORS(app)
 
 # ============ DATA V PAMĚTI ============
