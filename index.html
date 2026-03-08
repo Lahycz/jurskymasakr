@@ -9,11 +9,20 @@
 <style>
 body{
 margin:0;
+padding:0;
 }
 
 #map{
 height:100vh;
 width:100%;
+}
+
+.info {
+padding: 6px 8px;
+background: white;
+box-shadow: 0 0 15px rgba(0,0,0,0.2);
+border-radius: 5px;
+font-size: 14px;
 }
 </style>
 </head>
@@ -26,22 +35,39 @@ width:100%;
 
 <script>
 
-var width = 1 920;
-var height = 1 923;
+var width = 1920;
+var height = 1923;
 
 var map = L.map('map', {
 crs: L.CRS.Simple,
-minZoom: -2
+minZoom: -2,
+maxZoom: 3
 });
 
-var bounds = [[0,0],[height,width]];
+// Správné souřadnice pro bounds [top-left, bottom-right]
+var bounds = [[0, 0], [height, width]];
 
 var image = L.imageOverlay('mapa.jpg', bounds).addTo(map);
 
 map.fitBounds(bounds);
 
-var marker = L.marker([2000,2000]).addTo(map);
-marker.bindPopup("Spawn");
+// Spawn marker
+var marker = L.marker([961.5, 960]).addTo(map);
+marker.bindPopup("<b>Spawn Point</b><br>Počáteční pozice");
+marker.bindTooltip("Spawn", {permanent: false});
+
+// Příklad dalšího markeru
+var marker2 = L.marker([400, 400]).addTo(map);
+marker2.bindPopup("<b>Bod zájmu</b><br>Klikni na mě!");
+
+// Klikání na mapu pro přidávání markerů (debug mode)
+var clickMarkers = [];
+map.on('click', function(e) {
+  var popup = L.popup()
+    .setLatLng(e.latlng)
+    .setContent('Souřadnice: [' + Math.round(e.latlng.lat) + ', ' + Math.round(e.latlng.lng) + ']')
+    .openOn(map);
+});
 
 </script>
 
