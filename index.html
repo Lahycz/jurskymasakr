@@ -2,7 +2,7 @@
 <html>
 <head>
 <meta charset="utf-8">
-<title>Moje herní mapa</title>
+<title>Herní mapa</title>
 
 <link rel="stylesheet" href="https://unpkg.com/leaflet/dist/leaflet.css"/>
 
@@ -26,24 +26,30 @@ width:100%;
 
 <script>
 
-var map = L.map('map').setView([50.0755,14.4378],13);
+// velikost mapy (musí odpovídat obrázku)
+var width = 1 920;
+var height = 1 923;
 
-L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png',{
-maxZoom:19
-}).addTo(map);
+// vytvoření mapy
+var map = L.map('map', {
+crs: L.CRS.Simple,
+minZoom: -2
+});
 
-var marker = L.marker([50.0755,14.4378]).addTo(map);
+// souřadnice obrázku
+var bounds = [[0,0],[height,width]];
 
-marker.bindPopup("Startovní bod");
+// vložení obrázku mapy
+var image = L.imageOverlay('hordetesting_latest.webp', bounds).addTo(map);
+
+// přizpůsobení mapy
+map.fitBounds(bounds);
+
+// příklad bodu
+var marker = L.marker([2000,2000]).addTo(map);
+marker.bindPopup("Spawn");
 
 </script>
 
 </body>
 </html>
-
-</> JavaScript
-L.marker([50.08,14.42]).addTo(map)
-.bindPopup("Spawn jídla");
-
-L.marker([50.06,14.44]).addTo(map)
-.bindPopup("Hnízdo");
